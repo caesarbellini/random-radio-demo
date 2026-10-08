@@ -2047,18 +2047,27 @@ function startAudio(a, fadeMs = CFG.FADE_IN) {
     if (p) p.catch(err => {
         if (a === state.audio && err.name === 'NotAllowedError') setPlaying(false);
     });
-    fadeTo(a, 1, fadeMs);
+    // El fundido arranca cuando suena de verdad: si aún está cargando, no se gasta en silencio
+    const go = () => { if (state.playing && a === state.audio) fadeTo(a, 1, fadeMs); };
+    if (a.readyState >= 3 && !a.paused) go();
+    else a.addEventListener('playing', go, { once: true });
+}
+
+// Canciones que se están apagando (crossfade o salto); se descartan al llegar a 0
+const outgoing = new Set();
+function retire(a, ms) {
+    outgoing.add(a);
+    fadeTo(a, 0, a.paused ? 0 : ms).then(() => {
+        outgoing.delete(a);
+        a.pause();
+        a.removeAttribute('src');
+        a.load();
+    });
 }
 
 function playTrack(track, { fade = CFG.FADE_SKIP, autoplay = true } = {}) {
     const old = state.audio;
-    if (old) {
-        fadeTo(old, 0, old.paused ? 0 : fade).then(() => {
-            old.pause();
-            old.removeAttribute('src');
-            old.load();
-        });
-    }
+    if (old) retire(old, fade);
     state.current = track;
     state.startedAt = 0;
     state.audio = createAudio(track);
@@ -2087,6 +2096,7 @@ function togglePlay() {
     }
     if (state.playing) {
         setPlaying(false);
+        for (const o of outgoing) retire(o, CFG.FADE_PAUSE);   // que la anterior no siga sonando en pausa
         fadeTo(a, 0, CFG.FADE_PAUSE).then(() => { if (!state.playing && a === state.audio) a.pause(); });
     } else {
         startAudio(a, CFG.FADE_PAUSE + 150);
